@@ -7,6 +7,11 @@
 > - 转存会占用你的网盘空间；免费账号每天的转存次数有限
 > - 同一分享里转存过的文件会记住，重复解析不会再次转存（除非你把网盘里那份删了）
 
+> **This fork (dddd-zdf) — 先选文件，再取链接。** 解析时只列出文件名和大小（几十秒内出现勾选列表，不会超过 Gopeed 界面的 60 秒超时）；
+> 开始下载时才为**勾选的文件**取直链，登录时也只把**勾选的文件**转存到网盘。“直接下载”请保持不勾选，才能看到勾选列表。
+> Two-stage flow and retry/timeout client based on [TeamBreakerr/gopeed-extension-pikpak#1](https://github.com/TeamBreakerr/gopeed-extension-pikpak/pull/1) by learnr-reader.
+> Offline tests: `node --test tests/resolve.test.cjs`. Install: Gopeed 扩展页粘贴 `https://github.com/dddd-zdf/gopeed-extension-pikpak`.
+
 ## 功能
 
 - 识别 `mypikpak.com` / `mypikpak.net` 上的分享链接
