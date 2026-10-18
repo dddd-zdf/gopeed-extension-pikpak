@@ -13,7 +13,7 @@ function runtime(responses = [], settings = {}, storage = {}) {
   class XHR {
     open(method, url) { this.method = method; this.url = url; }
     setRequestHeader() {}
-    getResponseHeader() { return this.reply.retryAfter || null; }
+    getResponseHeader(k) { return k === 'Retry-After' ? (this.reply.retryAfter || null) : ((this.reply.headers || {})[k] || null); }
     send(body) {
       calls.push({ method: this.method, url: this.url, timeout: this.timeout, body });
       const reply = responses.shift();
@@ -40,9 +40,12 @@ function runtime(responses = [], settings = {}, storage = {}) {
 }
 
 const PENDING = 'https://pikpak-pending.invalid/file';
-const labels = (id, ancestors = '') => ({
+const labels = (id, ancestors = '', size = '0') => ({
   'pikpak-share-file': '1', 'pikpak-share-id': 'test', 'pikpak-file-id': id, 'pikpak-ancestors': ancestors,
+  'pikpak-size': size,
 });
+const streamInfo = { body: { file_info: { medias: [{ link: { url: 'https://stream.example/v' } }] } } };
+const probe = total => ({ status: 206, headers: { 'Content-Range': 'bytes 0-0/' + total } });
 function loggedInStorage() {
   return { device_id: 'dev', account: 'u', access_token: 'tok', refresh_token: 'rt', user_id: 'uid',
     expires_at: String(Date.now() + 3600e3) };
@@ -153,4 +156,38 @@ test('other tasks are left alone', async () => {
   const req = { url: 'https://example.com/x', labels: {} };
   await r.start({ task: { meta: { req } } });
   assert.equal(req.url, 'https://example.com/x');
+});
+
+test('resolve passes each file size to the start step', async () => {
+  const r = runtime(listingReplies());
+  const ctx = { req: { url: 'https://mypikpak.com/s/test' } };
+  await r.resolve(ctx);
+  assert.equal(ctx.res.files[1].req.labels['pikpak-size'], '20');
+});
+
+test('anonymous: a full-length video stream is used', async () => {
+  const r = runtime([{ body: { captcha_token: 'c' } }, streamInfo, probe(1000)]);
+  const req = { url: PENDING, labels: labels('a', '', '1000') };
+  await r.start({ task: { meta: { req } } });
+  assert.equal(req.url, 'https://stream.example/v');
+});
+
+test('anonymous: a preview stream shorter than the file is refused', async () => {
+  const r = runtime([{ body: { captcha_token: 'c' } }, streamInfo, probe(600)]);
+  const req = { url: PENDING, labels: labels('a', '', '1000') };
+  await assert.rejects(r.start({ task: { meta: { req } } }), /预览/);
+  assert.equal(req.url, PENDING);
+});
+
+test('logged in: a preview stream is replaced by the original from the drive', async () => {
+  const r = runtime([
+    { body: { captcha_token: 'c' } },
+    streamInfo, probe(600),
+    { body: { restore_status: 'RESTORE_COMPLETE', params: { trace_file_ids: '{"a":"own-a"}' } } },
+    { body: { web_content_link: 'https://download.example/own-a' } },
+  ], { username: 'u', password: 'p' }, loggedInStorage());
+  const req = { url: PENDING, labels: labels('a', '', '1000') };
+  await r.start({ task: { meta: { req } } });
+  assert.equal(req.url, 'https://download.example/own-a');
+  assert.deepEqual(JSON.parse(r.calls.find(c => c.url.includes('/share/restore')).body).file_ids, ['a']);
 });

@@ -272,6 +272,27 @@ function requestJsonOnce(opts) {
   });
 }
 
+// Total size behind a download link (from Content-Range of a 1-byte request), or -1.
+// Anonymous share links for videos can be a shortened preview stream, not the original file.
+function probeSize(url) {
+  return new Promise(function (resolve) {
+    var xhr = new XMLHttpRequest();
+    xhr.open("GET", url);
+    xhr.timeout = REQUEST_TIMEOUT_MS;
+    xhr.setRequestHeader("User-Agent", DEFAULT_UA);
+    xhr.setRequestHeader("Referer", "https://mypikpak.com/");
+    xhr.setRequestHeader("Range", "bytes=0-0");
+    xhr.onload = function () {
+      var m = /\/(\d+)\s*$/.exec(xhr.getResponseHeader("Content-Range") || "");
+      resolve(m ? parseInt(m[1], 10) : -1);
+    };
+    xhr.onerror = xhr.ontimeout = xhr.onabort = function () {
+      resolve(-1);
+    };
+    xhr.send(null);
+  });
+}
+
 function httpJson(opts) {
   // Never log queries, passwords, captcha tokens or signed download URLs.
   var endpoint = (opts.method || "GET") + " " + opts.url.split("?")[0];
@@ -936,6 +957,7 @@ gopeed.events.onResolve(function (ctx) {
                 "pikpak-share-id": parsed.shareId,
                 "pikpak-file-id": item.id,
                 "pikpak-ancestors": item.ancestors.join(","),
+                "pikpak-size": String(item.size || 0),
               },
             },
           };
@@ -967,6 +989,8 @@ gopeed.events.onStart(function (ctx) {
     url: "",
   };
   var loggedIn = false;
+  var expectedSize = parseInt(labels["pikpak-size"], 10) || 0;
+  var previewSize = 0;
 
   return Promise.resolve()
     .then(function () {
@@ -981,14 +1005,31 @@ gopeed.events.onStart(function (ctx) {
       });
     })
     .then(function () {
-      // 先试分享内的直链（匿名时只有视频有），再试已转存过的缓存
+      // 先试分享内的直链。没有原文件直链、只有视频播放流时，播放流可能只是预览（比原文件短），
+      // 用 1 字节请求对比分享列表里的大小，不完整就不用
       return client.getFileInfo(shareId, item.id).then(function (info) {
-        item.url = pickDownloadUrl(info.file_info || info, client.useTrans);
+        var fi = info.file_info || info;
+        if (fi.web_content_link || client.useTrans) {
+          item.url = pickDownloadUrl(fi, client.useTrans);
+          return;
+        }
+        var stream = pickDownloadUrl(fi, false);
+        if (!stream || !expectedSize) return;
+        return probeSize(stream).then(function (total) {
+          if (total === expectedSize) {
+            item.url = stream;
+          } else {
+            previewSize = total;
+            gopeed.logger.warn(
+              "[pikpak] share stream is " + total + " of " + expectedSize + " bytes (preview); not used"
+            );
+          }
+        });
       });
     })
     .then(function () {
       if (item.url || !loggedIn) return;
-      // 只转存这一个被选中的文件
+      // 只转存这一个被选中的文件，从自己网盘下载原文件
       return resolveByRestore(client, shareId, [item]);
     })
     .then(function () {
@@ -997,7 +1038,10 @@ gopeed.events.onStart(function (ctx) {
           loggedIn
             ? "已登录，但未能拿到下载地址" +
                 (client.restoreError ? "（" + client.restoreError + "）" : "")
-            : "匿名访问只提供视频的下载地址，其他文件请在扩展设置中填写 PikPak 账号密码或 refresh_token"
+            : previewSize
+              ? "匿名访问只能拿到预览（" + Math.round(previewSize / 1048576) + " MB / " +
+                  Math.round(expectedSize / 1048576) + " MB），请在扩展设置中填写 PikPak 账号密码或 refresh_token 下载完整文件"
+              : "匿名访问拿不到这个文件的下载地址，请在扩展设置中填写 PikPak 账号密码或 refresh_token"
         );
       }
       req.extra = req.extra || {};
