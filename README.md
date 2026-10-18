@@ -59,6 +59,7 @@ node test/cli.js https://mypikpak.com/s/<share_id>
 | `share_pwd` | 空 | 密码分享时填这里 |
 | `username` / `password` | 空 | PikPak 账号密码。若登录被要求人机验证（扩展里无法完成），改用 `refresh_token` |
 | `refresh_token` | 空 | 从网页端取得的 refresh_token，见下文 |
+| `cleanup_after_download` | 保留 | 下载完成后如何处理本扩展转存到网盘的那份：保留 / 移到回收站 / 永久删除。只动本扩展转存的文件；清理后再下载同一文件会重新转存（占用转存次数） |
 
 注意：Gopeed 设置项是明文保存的。
 

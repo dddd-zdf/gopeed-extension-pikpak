@@ -8,7 +8,7 @@ const source = fs.readFileSync(require('node:path').join(__dirname, '../index.js
 
 function runtime(responses = [], settings = {}, storage = {}) {
   const calls = [], logs = [], delays = [];
-  let resolve, start;
+  let resolve, start, done;
   class MessageError extends Error {}
   class XHR {
     open(method, url) { this.method = method; this.url = url; }
@@ -30,13 +30,13 @@ function runtime(responses = [], settings = {}, storage = {}) {
     setTimeout(fn, ms) { delays.push(ms); fn(); },
     gopeed: {
       settings,
-      events: { onResolve(fn) { resolve = fn; }, onStart(fn) { start = fn; } },
+      events: { onResolve(fn) { resolve = fn; }, onStart(fn) { start = fn; }, onDone(fn) { done = fn; } },
       storage: { get: k => (k in storage ? storage[k] : null), set: (k, v) => { storage[k] = String(v); } },
       logger: Object.fromEntries(['debug', 'info', 'warn', 'error'].map(k => [k, (...a) => logs.push(a.join(' '))])),
     },
   });
   vm.runInContext(source, context);
-  return { context, calls, logs, delays, resolve, start, MessageError, storage };
+  return { context, calls, logs, delays, resolve, start, done, MessageError, storage };
 }
 
 const PENDING = 'https://pikpak-pending.invalid/file';
@@ -190,4 +190,31 @@ test('logged in: a preview stream is replaced by the original from the drive', a
   await r.start({ task: { meta: { req } } });
   assert.equal(req.url, 'https://download.example/own-a');
   assert.deepEqual(JSON.parse(r.calls.find(c => c.url.includes('/share/restore')).body).file_ids, ['a']);
+});
+
+test('cleanup is off by default: a saved copy stays in the drive', async () => {
+  const st = Object.assign(loggedInStorage(), { 'restored:test:c': 'own-c' });
+  const r = runtime([], { username: 'u', password: 'p' }, st);
+  await r.done({ task: { meta: { req: { url: 'https://download.example/own-c', labels: labels('c') } } } });
+  assert.equal(r.calls.length, 0);
+  assert.equal(r.storage['restored:test:c'], 'own-c');
+});
+
+for (const [mode, path] of [['trash', 'files:batchTrash'], ['delete', 'files:batchDelete']]) {
+  test(`cleanup "${mode}" removes only the saved copy and forgets it`, async () => {
+    const st = Object.assign(loggedInStorage(), { 'restored:test:c': 'own-c' });
+    const r = runtime([{ body: { captcha_token: 'c' } }, { body: {} }],
+      { username: 'u', password: 'p', cleanup_after_download: mode }, st);
+    await r.done({ task: { meta: { req: { url: 'https://download.example/own-c', labels: labels('c') } } } });
+    const call = r.calls.find(c => c.url.includes(path));
+    assert.ok(call, 'expected ' + path);
+    assert.deepEqual(JSON.parse(call.body).ids, ['own-c']);
+    assert.equal(r.storage['restored:test:c'], '');
+  });
+}
+
+test('cleanup skips files that were never saved to the drive', async () => {
+  const r = runtime([], { username: 'u', password: 'p', cleanup_after_download: 'delete' }, loggedInStorage());
+  await r.done({ task: { meta: { req: { url: 'https://stream.example/v', labels: labels('a') } } } });
+  assert.equal(r.calls.length, 0);
 });

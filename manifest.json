@@ -4,7 +4,7 @@
   "title": "PikPak 分享下载",
   "description": "解析 mypikpak.com 分享链接：先列出文件供勾选，开始下载时才为选中的文件取直链/转存。视频可匿名下载，zip 等其他文件需填写 PikPak 账号或 refresh_token",
   "icon": "",
-  "version": "1.2.1",
+  "version": "1.3.0",
   "homepage": "https://github.com/dddd-zdf/gopeed-extension-pikpak",
   "repository": {
     "url": "https://github.com/dddd-zdf/gopeed-extension-pikpak"
@@ -24,6 +24,13 @@
     },
     {
       "event": "onStart",
+      "match": {
+        "labels": ["pikpak-share-file"]
+      },
+      "entry": "index.js"
+    },
+    {
+      "event": "onDone",
       "match": {
         "labels": ["pikpak-share-file"]
       },
@@ -91,6 +98,18 @@
       "description": "账号密码登录被要求人机验证时，改填网页端的 refresh_token（见 README）",
       "type": "string",
       "value": ""
+    },
+    {
+      "name": "cleanup_after_download",
+      "title": "下载完成后清理转存的文件",
+      "description": "只处理本扩展转存到你网盘里的文件。默认保留（再次下载同一文件不再占用转存次数）",
+      "type": "string",
+      "value": "0",
+      "options": [
+        { "label": "保留（不清理）", "value": "0" },
+        { "label": "移到回收站", "value": "trash" },
+        { "label": "永久删除", "value": "delete" }
+      ]
     }
   ]
 }

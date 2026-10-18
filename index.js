@@ -729,6 +729,12 @@ PikPakClient.prototype.restore = function (shareId, fileIds, ancestorIds) {
   );
 };
 
+// mode: "trash"（移到回收站）或 "delete"（永久删除）
+PikPakClient.prototype.removeOwnFiles = function (ids, mode) {
+  var path = mode === "delete" ? "/drive/v1/files:batchDelete" : "/drive/v1/files:batchTrash";
+  return this._request(path, "POST", null, { ids: ids });
+};
+
 PikPakClient.prototype.getOwnFile = function (fileId) {
   return this._request("/drive/v1/files/" + fileId, "GET", {
     _magic: "2021",
@@ -1055,5 +1061,31 @@ gopeed.events.onStart(function (ctx) {
       var message = "PikPak 下载地址解析失败：" + ((e && e.message) || String(e));
       gopeed.logger.error("[pikpak] " + message);
       throw new UserError(message);
+    });
+});
+
+// 下载完成后按设置清理本扩展转存到网盘里的那份（默认保留，与原版一致）
+gopeed.events.onDone(function (ctx) {
+  var labels = (ctx.task.meta.req && ctx.task.meta.req.labels) || {};
+  if (labels["pikpak-share-file"] !== "1") return;
+  var settings = gopeed.settings || {};
+  var mode = settings.cleanup_after_download;
+  if (mode !== "trash" && mode !== "delete") return;
+  var key = restoreCacheKey(labels["pikpak-share-id"], labels["pikpak-file-id"]);
+  var ownId = storageGet(key);
+  if (!ownId) return; // 不是转存来的（分享直链），网盘里没有这份
+  var client = new PikPakClient(settings);
+  return client
+    .ensureLogin()
+    .then(function (ok) {
+      if (!ok) return;
+      return client.removeOwnFiles([ownId], mode).then(function () {
+        storageSet(key, "");
+        gopeed.logger.info("[pikpak] cleanup (" + mode + ") saved copy " + ownId);
+      });
+    })
+    .catch(function (e) {
+      // 清理失败不影响已完成的下载
+      gopeed.logger.warn("[pikpak] cleanup failed: " + ((e && e.message) || String(e)));
     });
 });
